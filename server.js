@@ -215,6 +215,25 @@ app.get('/api/requests', (req, res) => {
     }
 });
 
+// 清空所有請求（管理端使用，GUI 啟動時調用）
+app.post('/api/clear_requests', (req, res) => {
+    try {
+        // 清空請求文件
+        fs.writeFileSync(REQUESTS_FILE, '');
+        
+        res.json({ 
+            success: true, 
+            message: '請求列表已清空' 
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
 // 獲取所有租戶（管理端使用）
 app.get('/api/tenants', (req, res) => {
     try {
