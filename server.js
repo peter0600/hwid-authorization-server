@@ -385,6 +385,58 @@ function updateRequestStatus(hwid, status) {
     }
 }
 
+// 更新租戶（管理端編輯時調用，用於更新到期日期等資訊）
+app.post('/api/update_tenant', (req, res) => {
+    try {
+        const { hwid, tenantName, jarUrl, expiryDate, maxUsage, status } = req.body;
+        
+        if (!hwid) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'HWID 不能為空' 
+            });
+        }
+        
+        const tenants = loadTenants();
+        let found = false;
+        
+        // 查找對應的租戶
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                found = true;
+                // 更新租戶資訊
+                if (tenantName !== undefined) tenants[tenantId].tenantName = tenantName;
+                if (jarUrl !== undefined) tenants[tenantId].jarUrl = jarUrl;
+                if (expiryDate !== undefined) tenants[tenantId].expiryDate = expiryDate;
+                if (maxUsage !== undefined) tenants[tenantId].maxUsage = maxUsage;
+                if (status !== undefined) tenants[tenantId].status = status;
+                tenants[tenantId].lastAccessTime = Date.now();
+                break;
+            }
+        }
+        
+        if (!found) {
+            return res.status(404).json({ 
+                success: false, 
+                message: '找不到對應的租戶' 
+            });
+        }
+        
+        saveTenants(tenants);
+        
+        res.json({ 
+            success: true, 
+            message: '租戶更新成功' 
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
 // 同步租戶數據（管理端保存時調用）
 app.post('/api/sync/tenants', (req, res) => {
     try {
@@ -446,6 +498,10 @@ app.get('/api/getjar', (req, res) => {
                 });
             }
             
+            // 更新最後訪問時間
+            tenant.lastAccessTime = Date.now();
+            saveTenants(tenants);
+            
             res.json({
                 success: true,
                 jarUrl: tenant.jarUrl || '',
@@ -457,6 +513,58 @@ app.get('/api/getjar', (req, res) => {
                 status: 'invalid'
             });
         }
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// 報告資料庫資訊（客戶端登入成功後調用）
+app.post('/api/report_database', (req, res) => {
+    try {
+        const { hwid, loginDatabase, gameDatabase } = req.body;
+        
+        if (!hwid) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'HWID 不能為空' 
+            });
+        }
+        
+        const tenants = loadTenants();
+        let found = false;
+        
+        // 查找對應的租戶並更新資料庫資訊
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                found = true;
+                if (loginDatabase !== undefined) {
+                    tenants[tenantId].loginDatabase = loginDatabase;
+                }
+                if (gameDatabase !== undefined) {
+                    tenants[tenantId].gameDatabase = gameDatabase;
+                }
+                tenants[tenantId].lastAccessTime = Date.now();
+                break;
+            }
+        }
+        
+        if (!found) {
+            return res.status(404).json({ 
+                success: false, 
+                message: '找不到對應的租戶' 
+            });
+        }
+        
+        saveTenants(tenants);
+        
+        res.json({ 
+            success: true, 
+            message: '資料庫資訊已更新' 
+        });
         
     } catch (error) {
         res.status(500).json({ 
