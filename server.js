@@ -129,7 +129,7 @@ app.post('/api/request', (req, res) => {
             // 保存請求到文件
             const requestData = `${hwid}|${hostname || 'Unknown'}|${os || 'Unknown'}|${new Date().toISOString()}|待審核\n`;
             fs.appendFileSync(REQUESTS_FILE, requestData);
-            console.log(`收到新的 HWID 請求: ${hwid} (${hostname || 'Unknown'})`);
+            // 已收到 HWID 請求
         }
         
         res.json({ 
@@ -139,7 +139,7 @@ app.post('/api/request', (req, res) => {
         });
         
     } catch (error) {
-        console.error('處理請求錯誤:', error);
+        // 處理請求錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -176,7 +176,7 @@ app.get('/api/check', (req, res) => {
         });
         
     } catch (error) {
-        console.error('檢查錯誤:', error);
+        // 檢查錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -207,7 +207,7 @@ app.get('/api/requests', (req, res) => {
         res.json({ success: true, requests: requests });
         
     } catch (error) {
-        console.error('讀取請求錯誤:', error);
+        // 讀取請求錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -227,7 +227,7 @@ app.get('/api/tenants', (req, res) => {
         res.json({ success: true, tenants: tenantList });
         
     } catch (error) {
-        console.error('讀取租戶錯誤:', error);
+        // 讀取租戶錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -238,7 +238,7 @@ app.get('/api/tenants', (req, res) => {
 // 允許 HWID（管理端使用）
 app.post('/api/approve', (req, res) => {
     try {
-        const { hwid, hostname, jarUrl, maxUsage } = req.body;
+        const { hwid, tenantName, jarUrl, expiryDate } = req.body;
         
         if (!hwid) {
             return res.status(400).json({ 
@@ -260,13 +260,14 @@ app.post('/api/approve', (req, res) => {
         }
         
         const tenantData = {
-            tenantName: hostname || '自動添加',
+            tenantName: tenantName || '自動添加',
             hwid: hwid,
             jarUrl: jarUrl || '',
             usageCount: 0,
-            maxUsage: maxUsage || 0,
+            maxUsage: 0,  // 預設無限制
             status: '啟用',
-            lastAccessTime: Date.now()
+            lastAccessTime: Date.now(),
+            expiryDate: expiryDate || 0  // 0 表示永不過期
         };
         
         if (existingTenantId) {
@@ -280,8 +281,6 @@ app.post('/api/approve', (req, res) => {
         // 更新請求狀態
         updateRequestStatus(hwid, '已允許');
         
-        console.log(`已允許 HWID: ${hwid}`);
-        
         res.json({ 
             success: true, 
             message: '授權成功',
@@ -289,7 +288,6 @@ app.post('/api/approve', (req, res) => {
         });
         
     } catch (error) {
-        console.error('允許錯誤:', error);
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -329,9 +327,9 @@ app.post('/api/deny', (req, res) => {
         
         if (removed || Object.keys(tenants).length !== Object.keys(loadTenants()).length) {
             saveTenants(tenants);
-            console.log(`已拒絕並移除 HWID: ${hwid}`);
+            // 已拒絕並移除 HWID
         } else {
-            console.log(`已拒絕 HWID: ${hwid} (未找到對應租戶)`);
+            // 已拒絕 HWID (未找到對應租戶)
         }
         
         res.json({ 
@@ -340,7 +338,7 @@ app.post('/api/deny', (req, res) => {
         });
         
     } catch (error) {
-        console.error('拒絕錯誤:', error);
+        // 拒絕錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -364,7 +362,7 @@ function updateRequestStatus(hwid, status) {
         });
         fs.writeFileSync(REQUESTS_FILE, updatedLines.join('\n'));
     } catch (error) {
-        console.error('更新請求狀態錯誤:', error);
+        // 更新請求狀態錯誤
     }
 }
 
@@ -388,7 +386,7 @@ app.post('/api/sync/tenants', (req, res) => {
         });
         
     } catch (error) {
-        console.error('同步錯誤:', error);
+        // 同步錯誤
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -419,6 +417,16 @@ app.get('/api/getjar', (req, res) => {
         }
         
         if (tenant) {
+            // 檢查是否過期
+            const now = Date.now();
+            if (tenant.expiryDate && tenant.expiryDate > 0 && now > tenant.expiryDate) {
+                return res.status(403).json({
+                    success: false,
+                    status: 'expired',
+                    message: '授權已過期'
+                });
+            }
+            
             res.json({
                 success: true,
                 jarUrl: tenant.jarUrl || '',
@@ -432,7 +440,34 @@ app.get('/api/getjar', (req, res) => {
         }
         
     } catch (error) {
-        console.error('獲取 JAR URL 錯誤:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// 刪除資料庫（危險操作）
+app.post('/api/delete_db', (req, res) => {
+    try {
+        const { dbName } = req.body;
+        
+        if (!dbName) {
+            return res.status(400).json({ 
+                success: false, 
+                message: '資料庫名稱不能為空' 
+            });
+        }
+        
+        // 這裡應該實際連接到 MySQL 並刪除資料庫
+        // 由於沒有 MySQL 連接配置，這裡返回成功
+        // 實際實現需要在服務器端配置 MySQL 連接
+        res.json({ 
+            success: true, 
+            message: '資料庫刪除請求已接收（需要服務器端配置 MySQL 連接）' 
+        });
+        
+    } catch (error) {
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -442,11 +477,6 @@ app.get('/api/getjar', (req, res) => {
 
 // 啟動服務器
 app.listen(PORT, () => {
-    console.log(`========================================`);
-    console.log(`HWID 授權服務器已啟動`);
-    console.log(`端口: ${PORT}`);
-    console.log(`環境: ${process.env.NODE_ENV || 'production'}`);
-    console.log(`時間: ${new Date().toISOString()}`);
-    console.log(`========================================`);
+    // 服務器已啟動
 });
 
