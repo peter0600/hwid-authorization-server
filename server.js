@@ -95,11 +95,42 @@ app.post('/api/request', (req, res) => {
             });
         }
         
-        // 保存請求到文件
-        const requestData = `${hwid}|${hostname || 'Unknown'}|${os || 'Unknown'}|${new Date().toISOString()}|待審核\n`;
-        fs.appendFileSync(REQUESTS_FILE, requestData);
+        // 檢查是否已被拒絕（在請求列表中查找）
+        try {
+            const data = fs.readFileSync(REQUESTS_FILE, 'utf8');
+            const lines = data.split('\n').filter(line => line.trim());
+            for (const line of lines) {
+                const parts = line.split('|');
+                if (parts[0] === hwid && parts[4] && parts[4].trim() === '已拒絕') {
+                    return res.json({
+                        success: true,
+                        message: '此 HWID 已被拒絕',
+                        authorized: false,
+                        denied: true
+                    });
+                }
+            }
+        } catch (e) {
+            // 忽略讀取錯誤
+        }
         
-        console.log(`收到新的 HWID 請求: ${hwid} (${hostname || 'Unknown'})`);
+        // 檢查是否已有待審核的請求（避免重複）
+        let alreadyRequested = false;
+        try {
+            const data = fs.readFileSync(REQUESTS_FILE, 'utf8');
+            if (data.includes(hwid + '|')) {
+                alreadyRequested = true;
+            }
+        } catch (e) {
+            // 忽略
+        }
+        
+        if (!alreadyRequested) {
+            // 保存請求到文件
+            const requestData = `${hwid}|${hostname || 'Unknown'}|${os || 'Unknown'}|${new Date().toISOString()}|待審核\n`;
+            fs.appendFileSync(REQUESTS_FILE, requestData);
+            console.log(`收到新的 HWID 請求: ${hwid} (${hostname || 'Unknown'})`);
+        }
         
         res.json({ 
             success: true, 
@@ -278,13 +309,34 @@ app.post('/api/deny', (req, res) => {
             });
         }
         
+        // 更新請求狀態
         updateRequestStatus(hwid, '已拒絕');
         
-        console.log(`已拒絕 HWID: ${hwid}`);
+        // 重要：從租戶列表中移除或停用該 HWID
+        const tenants = loadTenants();
+        let removed = false;
+        
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                // 方法1：完全刪除租戶
+                delete tenants[tenantId];
+                removed = true;
+                // 方法2：或將狀態改為停用（如果想保留記錄）
+                // tenants[tenantId].status = '停用';
+                break;
+            }
+        }
+        
+        if (removed || Object.keys(tenants).length !== Object.keys(loadTenants()).length) {
+            saveTenants(tenants);
+            console.log(`已拒絕並移除 HWID: ${hwid}`);
+        } else {
+            console.log(`已拒絕 HWID: ${hwid} (未找到對應租戶)`);
+        }
         
         res.json({ 
             success: true, 
-            message: '已拒絕' 
+            message: '已拒絕並移除授權' 
         });
         
     } catch (error) {
