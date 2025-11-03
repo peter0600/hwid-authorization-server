@@ -632,10 +632,60 @@ app.post('/api/upload_backup', (req, res) => {
             }
         } catch (e) {}
 
-        const buffer = Buffer.from(contentBase64, 'base64');
+        const buffer = Buffer.from(String(contentBase64).trim(), 'base64');
+        // 檢查 ZIP 魔數 ("PK")，避免上傳內容損壞
+        if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4B) {
+            return res.status(400).json({ success: false, message: '上傳內容不是有效的 ZIP（base64 解析後缺少 PK 標頭）' });
+        }
         fs.writeFileSync(target, buffer);
 
         return res.json({ success: true, message: '備份已上傳', path: `backups/${safeHwid}/${safeName}` });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 上傳資料庫備份（原始二進位串流，避免 base64 損壞）
+// 用法：Content-Type: application/octet-stream，query 參數：?hwid=...（name 選填，最終仍保存為 latest.zip）
+app.post('/api/upload_backup_raw', (req, res) => {
+    try {
+        const hwid = req.query.hwid;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: 'HWID 不能為空' });
+        }
+        const safeHwid = String(hwid).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const dir = path.join(BACKUPS_DIR, safeHwid);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // 清空原檔，只保留一份
+        try {
+            const files = fs.readdirSync(dir);
+            for (const f of files) {
+                try { fs.unlinkSync(path.join(dir, f)); } catch (e) {}
+            }
+        } catch (e) {}
+        const target = path.join(dir, 'latest.zip');
+
+        // 將請求串流直接寫入檔案
+        const writeStream = fs.createWriteStream(target);
+        req.pipe(writeStream);
+        writeStream.on('finish', () => {
+            // 基本檢查：讀前兩位是否為 PK
+            try {
+                const fd = fs.openSync(target, 'r');
+                const head = Buffer.alloc(4);
+                fs.readSync(fd, head, 0, 4, 0);
+                fs.closeSync(fd);
+                if (head[0] !== 0x50 || head[1] !== 0x4B) {
+                    return res.status(400).json({ success: false, message: '上傳內容不是有效的 ZIP（缺少 PK 標頭）' });
+                }
+            } catch (e) {
+                return res.status(500).json({ success: false, message: '檔案驗證失敗: ' + e.message });
+            }
+            return res.json({ success: true, message: '備份已上傳', path: `backups/${safeHwid}/latest.zip` });
+        });
+        writeStream.on('error', (err) => {
+            return res.status(500).json({ success: false, error: err.message });
+        });
     } catch (error) {
         return res.status(500).json({ success: false, error: error.message });
     }
