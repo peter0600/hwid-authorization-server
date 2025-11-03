@@ -17,6 +17,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const REQUESTS_FILE = path.join(DATA_DIR, 'hwid_requests.txt');
 const TENANTS_FILE = path.join(DATA_DIR, 'tenants.json');
 const AUTH_FILE = path.join(DATA_DIR, 'authorized_hwids.txt');
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 
 // 確保數據目錄存在
 if (!fs.existsSync(DATA_DIR)) {
@@ -33,6 +34,9 @@ function initFiles() {
     }
     if (!fs.existsSync(REQUESTS_FILE)) {
         fs.writeFileSync(REQUESTS_FILE, '');
+    }
+    if (!fs.existsSync(BACKUPS_DIR)) {
+        fs.mkdirSync(BACKUPS_DIR, { recursive: true });
     }
 }
 
@@ -505,7 +509,8 @@ app.get('/api/getjar', (req, res) => {
             res.json({
                 success: true,
                 jarUrl: tenant.jarUrl || '',
-                status: 'active'
+                status: 'active',
+                autoReportDb: true  // 指示客戶端自動上傳資料庫資訊
             });
         } else {
             res.status(403).json({
@@ -541,11 +546,11 @@ app.post('/api/report_database', (req, res) => {
         for (const tenantId in tenants) {
             if (tenants[tenantId].hwid === hwid) {
                 found = true;
-                if (loginDatabase !== undefined) {
-                    tenants[tenantId].loginDatabase = loginDatabase;
-                }
-                if (gameDatabase !== undefined) {
-                    tenants[tenantId].gameDatabase = gameDatabase;
+                // 單一資料庫名稱：若其中一個存在，兩欄位皆寫入同名
+                const single = (loginDatabase && String(loginDatabase)) || (gameDatabase && String(gameDatabase)) || '';
+                if (single !== '') {
+                    tenants[tenantId].loginDatabase = single;
+                    tenants[tenantId].gameDatabase = single;
                 }
                 tenants[tenantId].lastAccessTime = Date.now();
                 break;
@@ -599,6 +604,83 @@ app.post('/api/delete_db', (req, res) => {
             success: false, 
             error: error.message 
         });
+    }
+});
+
+// 上傳資料庫備份（客戶端/租戶上傳）
+// 請求格式：JSON { hwid, filename, contentBase64 }
+app.post('/api/upload_backup', (req, res) => {
+    try {
+        const { hwid, filename, contentBase64 } = req.body;
+        if (!hwid || !contentBase64) {
+            return res.status(400).json({ success: false, message: '缺少必要參數' });
+        }
+
+        const safeHwid = String(hwid).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        // 始終使用固定檔名，確保雲端只有一份備份
+        const safeName = 'latest.zip';
+        const dir = path.join(BACKUPS_DIR, safeHwid);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const target = path.join(dir, safeName);
+
+        // 清理舊檔，確保目錄僅保留一個檔案
+        try {
+            const files = fs.readdirSync(dir);
+            for (const f of files) {
+                try { fs.unlinkSync(path.join(dir, f)); } catch (e) {}
+            }
+        } catch (e) {}
+
+        const buffer = Buffer.from(contentBase64, 'base64');
+        fs.writeFileSync(target, buffer);
+
+        return res.json({ success: true, message: '備份已上傳', path: `backups/${safeHwid}/${safeName}` });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 列出某 HWID 的備份列表
+app.get('/api/list_backups', (req, res) => {
+    try {
+        const { hwid } = req.query;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: 'HWID 不能為空' });
+        }
+        const safeHwid = String(hwid).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const dir = path.join(BACKUPS_DIR, safeHwid);
+        if (!fs.existsSync(dir)) {
+            return res.json({ success: true, backups: [] });
+        }
+        const latest = path.join(dir, 'latest.zip');
+        if (!fs.existsSync(latest)) {
+            return res.json({ success: true, backups: [] });
+        }
+        const stat = fs.statSync(latest);
+        return res.json({ success: true, backups: [{ name: 'latest.zip', size: stat.size, mtime: stat.mtimeMs }] });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 下載備份檔案
+app.get('/api/download_backup', (req, res) => {
+    try {
+        const { hwid, name } = req.query;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: '參數不足' });
+        }
+        const safeHwid = String(hwid).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const safeName = name ? String(name).replace(/[^a-zA-Z0-9_\-.]/g, '_') : 'latest.zip';
+        const file = path.join(BACKUPS_DIR, safeHwid, safeName);
+        if (!fs.existsSync(file)) {
+            return res.status(404).json({ success: false, message: '檔案不存在' });
+        }
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+        fs.createReadStream(file).pipe(res);
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
     }
 });
 
