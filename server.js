@@ -9,8 +9,9 @@ const PORT = process.env.PORT || 10000;  // Render.com 會自動設置 PORT
 
 // 中間件
 app.use(cors());  // 允許跨域請求
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+// 調整上傳大小限制，避免大型備份 Base64 被截斷
+app.use(bodyParser.urlencoded({ extended: true, limit: '200mb' }));
+app.use(bodyParser.json({ limit: '200mb' }));
 
 // 數據文件路徑
 const DATA_DIR = path.join(__dirname, 'data');
