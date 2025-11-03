@@ -735,6 +735,81 @@ app.get('/api/download_backup', (req, res) => {
     }
 });
 
+// 請求即時備份（GUI 觸發）
+app.post('/api/request_backup', (req, res) => {
+    try {
+        const { hwid } = req.body;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: 'HWID 不能為空' });
+        }
+        const tenants = loadTenants();
+        let found = false;
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                found = true;
+                tenants[tenantId].backupRequested = true;
+                tenants[tenantId].backupRequestedAt = Date.now();
+                break;
+            }
+        }
+        if (!found) return res.status(404).json({ success: false, message: '找不到對應的租戶' });
+        saveTenants(tenants);
+        return res.json({ success: true });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 客戶端輪詢備份任務（Loader 輪詢）
+app.get('/api/backup_task', (req, res) => {
+    try {
+        const { hwid } = req.query;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: 'HWID 不能為空' });
+        }
+        const tenants = loadTenants();
+        let doBackup = false;
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                if (tenants[tenantId].backupRequested) {
+                    doBackup = true;
+                    // 立即清除請求，避免重複
+                    tenants[tenantId].backupRequested = false;
+                    saveTenants(tenants);
+                }
+                break;
+            }
+        }
+        return res.json({ success: true, do: doBackup });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 客戶端回報備份完成（可記錄時間供 GUI 檢查）
+app.post('/api/backup_done', (req, res) => {
+    try {
+        const { hwid } = req.body;
+        if (!hwid) {
+            return res.status(400).json({ success: false, message: 'HWID 不能為空' });
+        }
+        const tenants = loadTenants();
+        let found = false;
+        for (const tenantId in tenants) {
+            if (tenants[tenantId].hwid === hwid) {
+                found = true;
+                tenants[tenantId].lastBackupAt = Date.now();
+                break;
+            }
+        }
+        if (!found) return res.status(404).json({ success: false, message: '找不到對應的租戶' });
+        saveTenants(tenants);
+        return res.json({ success: true });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // 啟動服務器
 app.listen(PORT, () => {
     // 服務器已啟動
